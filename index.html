@@ -271,6 +271,22 @@
   let cutoutBlob = null; // PNG blob with transparent bg, straight from the model
   let finalWebpBlob = null;
   let originalName = 'produto';
+  let activeObjectUrls = []; // URLs criadas pra preview, revogadas a cada nova imagem
+
+  function clearPreviousImages(){
+    activeObjectUrls.forEach(u => URL.revokeObjectURL(u));
+    activeObjectUrls = [];
+    origImg.src = '';
+    resultImg.src = '';
+    cutoutBlob = null;
+    finalWebpBlob = null;
+  }
+
+  function trackObjectUrl(blob){
+    const url = URL.createObjectURL(blob);
+    activeObjectUrls.push(url);
+    return url;
+  }
 
   function setStatus(msg, kind){
     statusEl.textContent = msg || '';
@@ -314,17 +330,19 @@
 
   async function processSource(source, label){
     try{
+      clearPreviousImages();
       previews.style.display = 'none';
       downloadBtn.disabled = true;
       const maxDim = parseInt(preSizeSlider.value, 10);
 
       setStatus('Lendo "' + label + '"...');
       const normalized = await normalizeToPngBlob(source, maxDim);
-      origImg.src = URL.createObjectURL(normalized);
+      origImg.src = trackObjectUrl(normalized);
 
       setStatus('Removendo fundo... (baixando o modelo de IA na primeira vez, ~40MB, depois fica em cache)');
       const blob = await removeBackground(normalized, {
         model: 'isnet_quint8', // versão leve e rápida do modelo, ótima pra foto de produto
+        device: 'gpu', // usa WebGPU quando o navegador suporta; cai pra CPU sozinho se não tiver
         progress: (key, current, total) => {
           if(total > 0){
             setStatus('Removendo fundo... ' + key + ' (' + Math.round((current/total)*100) + '%)');
@@ -333,7 +351,7 @@
       });
       cutoutBlob = blob;
 
-      resultImg.src = URL.createObjectURL(blob);
+      resultImg.src = trackObjectUrl(blob);
       previews.style.display = 'grid';
       setStatus('Fundo removido. Ajuste a compressão e baixe.', 'ok');
       await renderWebp();
@@ -408,14 +426,13 @@
   downloadBtn.addEventListener('click', () => {
     if(!finalWebpBlob) return;
     const a = document.createElement('a');
-    a.href = URL.createObjectURL(finalWebpBlob);
+    a.href = trackObjectUrl(finalWebpBlob);
     a.download = originalName + '-sem-fundo.webp';
     a.click();
   });
 
   resetBtn.addEventListener('click', () => {
-    cutoutBlob = null;
-    finalWebpBlob = null;
+    clearPreviousImages();
     previews.style.display = 'none';
     fileInput.value = '';
     urlInput.value = '';
