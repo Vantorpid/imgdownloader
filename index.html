@@ -198,11 +198,14 @@
     </div>
 
     <div class="card">
-      <h2>COMO FUNCIONA</h2>
-      <div class="hint" style="margin-top:0;">
-        1. A imagem entra e o fundo é apagado por um modelo de IA rodando localmente no seu navegador (primeira vez baixa ~40MB do modelo, depois fica em cache).<br><br>
-        2. Você ajusta compressão e tamanho.<br><br>
-        3. Baixa o .webp com fundo transparente, pronto pra subir no catálogo.
+      <h2>RESOLUÇÃO DE PROCESSAMENTO</h2>
+      <div class="row" style="margin-bottom:4px;">
+        <label>Máx. antes da IA</label>
+        <input type="range" id="preSizeSlider" min="800" max="3000" step="100" value="1600">
+        <span class="val" id="preSizeVal">1600</span>
+      </div>
+      <div class="hint" style="margin-top:2px;">
+        A foto é redimensionada pra esse tamanho antes de passar pela IA. Menor = mais rápido e menos risco de travar o navegador. 1200–1600px já é mais que suficiente pra foto de produto.
       </div>
     </div>
   </div>
@@ -255,9 +258,15 @@
   const qualityVal = document.getElementById('qualityVal');
   const widthSlider = document.getElementById('widthSlider');
   const widthVal = document.getElementById('widthVal');
+  const preSizeSlider = document.getElementById('preSizeSlider');
+  const preSizeVal = document.getElementById('preSizeVal');
   const filesizeEl = document.getElementById('filesize');
   const downloadBtn = document.getElementById('downloadBtn');
   const resetBtn = document.getElementById('resetBtn');
+
+  preSizeSlider.addEventListener('input', () => {
+    preSizeVal.textContent = preSizeSlider.value;
+  });
 
   let cutoutBlob = null; // PNG blob with transparent bg, straight from the model
   let finalWebpBlob = null;
@@ -273,17 +282,55 @@
     return i > 0 ? name.slice(0, i) : name;
   }
 
+  // Converte qualquer fonte (File, Blob ou URL) que o navegador consiga decodificar
+  // — jpeg, png, webp, avif, gif, bmp — num PNG normalizado e já redimensionado.
+  // Isso evita erros de formato não suportado pela lib de IA e evita estourar
+  // memória com fotos gigantes.
+  async function normalizeToPngBlob(source, maxDim){
+    let blob;
+    if(source instanceof Blob){
+      blob = source;
+    }else{
+      const res = await fetch(source, { mode: 'cors' });
+      if(!res.ok) throw new Error('Falha ao baixar a imagem do link (HTTP ' + res.status + ')');
+      blob = await res.blob();
+    }
+
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+
+    const pngBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    return pngBlob;
+  }
+
   async function processSource(source, label){
     try{
       previews.style.display = 'none';
       downloadBtn.disabled = true;
-      setStatus('Carregando modelo e removendo fundo de "' + label + '"... (pode levar alguns segundos na primeira vez)');
+      const maxDim = parseInt(preSizeSlider.value, 10);
 
-      // preview original
-      const origUrl = (source instanceof Blob) ? URL.createObjectURL(source) : source;
-      origImg.src = origUrl;
+      setStatus('Lendo "' + label + '"...');
+      const normalized = await normalizeToPngBlob(source, maxDim);
+      origImg.src = URL.createObjectURL(normalized);
 
-      const blob = await removeBackground(source);
+      setStatus('Removendo fundo... (baixando o modelo de IA na primeira vez, ~40MB, depois fica em cache)');
+      const blob = await removeBackground(normalized, {
+        model: 'isnet_quint8', // versão leve e rápida do modelo, ótima pra foto de produto
+        progress: (key, current, total) => {
+          if(total > 0){
+            setStatus('Removendo fundo... ' + key + ' (' + Math.round((current/total)*100) + '%)');
+          }
+        }
+      });
       cutoutBlob = blob;
 
       resultImg.src = URL.createObjectURL(blob);
@@ -292,7 +339,7 @@
       await renderWebp();
     }catch(err){
       console.error(err);
-      setStatus('Não consegui processar essa imagem (' + (err?.message || 'erro desconhecido') + '). Se veio de um link, tente salvar a imagem e arrastar o arquivo.', 'err');
+      setStatus('Não consegui processar essa imagem (' + (err?.message || 'erro desconhecido') + '). Se veio de um link, tente salvar a imagem e arrastar o arquivo, ou diminua a "resolução de processamento".', 'err');
     }
   }
 
