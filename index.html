@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Extrator de Produto — fundo fora, WebP pronto</title>
+<style>
+  :root{
+    --bg: #17181a;
+    --panel: #1f2124;
+    --panel-2: #26282c;
+    --line: #34363b;
+    --text: #eef0ee;
+    --muted: #96999e;
+    --accent: #f2b134;
+    --accent-dim: #a97e2c;
+    --ok: #6fcf97;
+    --err: #e2685a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background: var(--bg);
+    color: var(--text);
+    font-family: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+    min-height:100vh;
+    padding: 28px 16px 60px;
+  }
+  .wrap{ max-width: 880px; margin: 0 auto; }
+
+  header{ margin-bottom: 22px; }
+  header h1{
+    font-size: 1.5rem;
+    margin: 0 0 6px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  header p{ color: var(--muted); margin:0; font-size:0.92rem; line-height:1.5; max-width: 60ch;}
+
+  .grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 720px){ .grid{ grid-template-columns: 1fr; } }
+
+  .card{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .card h2{
+    font-size: 0.78rem;
+    text-transform: none;
+    color: var(--muted);
+    margin: 0 0 12px;
+    font-weight: 600;
+  }
+
+  .drop{
+    border: 1.5px dashed var(--line);
+    border-radius: 8px;
+    padding: 30px 14px;
+    text-align:center;
+    cursor:pointer;
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .drop:hover, .drop.drag{
+    border-color: var(--accent);
+    background: rgba(242,177,52,0.06);
+  }
+  .drop .big{ font-size:0.95rem; margin-bottom:4px; }
+  .drop .small{ font-size:0.8rem; color: var(--muted); }
+  input[type=file]{ display:none; }
+
+  .url-row{ display:flex; gap:8px; margin-top:12px; }
+  .url-row input[type=text]{
+    flex:1;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: 9px 11px;
+    color: var(--text);
+    font-size: 0.87rem;
+  }
+  .url-row input[type=text]:focus{ outline: 1.5px solid var(--accent); border-color: var(--accent); }
+  .url-row button, .btn{
+    background: var(--accent);
+    color: #1a1a1a;
+    border: none;
+    border-radius: 7px;
+    padding: 9px 14px;
+    font-size: 0.87rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .url-row button:hover, .btn:hover{ background: #ffc44f; }
+  .btn.secondary{
+    background: transparent;
+    color: var(--text);
+    border: 1px solid var(--line);
+  }
+  .btn.secondary:hover{ border-color: var(--accent); background: rgba(242,177,52,0.06); }
+  .btn:disabled{ opacity:0.45; cursor:not-allowed; }
+
+  .hint{ font-size: 0.76rem; color: var(--muted); margin-top: 8px; line-height:1.5;}
+
+  .status{
+    margin-top: 14px;
+    font-size: 0.83rem;
+    color: var(--muted);
+    min-height: 1.2em;
+  }
+  .status.ok{ color: var(--ok); }
+  .status.err{ color: var(--err); }
+
+  .previews{
+    margin-top: 22px;
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+  }
+  @media (max-width: 720px){ .previews{ grid-template-columns: 1fr; } }
+  .preview-box{
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .preview-box h3{
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin: 0 0 10px;
+    font-weight: 600;
+  }
+  .checker{
+    background-image:
+      linear-gradient(45deg, #2b2c2f 25%, transparent 25%),
+      linear-gradient(-45deg, #2b2c2f 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #2b2c2f 75%),
+      linear-gradient(-45deg, transparent 75%, #2b2c2f 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+    background-color: #1a1a1a;
+    border-radius: 6px;
+    display:flex; align-items:center; justify-content:center;
+    min-height: 220px;
+    overflow:hidden;
+  }
+  .checker img{ max-width:100%; max-height: 320px; display:block; }
+
+  .controls{ margin-top:16px; }
+  .row{ display:flex; align-items:center; gap:10px; margin-bottom:10px; font-size:0.85rem; }
+  .row label{ width: 130px; color: var(--muted); flex-shrink:0; }
+  .row input[type=range]{ flex:1; accent-color: var(--accent); }
+  .row .val{ width: 46px; text-align:right; font-variant-numeric: tabular-nums; color: var(--text); }
+
+  .filesize{ font-size:0.8rem; color: var(--muted); margin-top: 10px; }
+  .filesize b{ color: var(--text); }
+
+  .actions{ display:flex; gap:10px; margin-top: 14px; flex-wrap:wrap; }
+
+  footer{
+    margin-top: 34px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-size: 0.78rem;
+    color: var(--muted);
+    line-height:1.6;
+  }
+  a{ color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Extrator de produto</h1>
+    <p>Solte uma foto ou cole um link. O fundo é removido e a imagem sai pronta em WebP, tudo direto no navegador — nada é enviado pra nenhum servidor.</p>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>ENVIAR IMAGEM</h2>
+      <div class="drop" id="dropZone">
+        <div class="big">Arraste a foto aqui</div>
+        <div class="small">ou clique para escolher um arquivo</div>
+      </div>
+      <input type="file" id="fileInput" accept="image/*">
+      <div class="url-row">
+        <input type="text" id="urlInput" placeholder="ou cole o link direto da imagem (https://...)">
+        <button id="urlBtn">Usar link</button>
+      </div>
+      <div class="hint">
+        Links de páginas de busca do Google costumam bloquear esse acesso (CORS). Se der erro, clique com o botão direito na imagem → "Salvar imagem como" e depois arraste o arquivo salvo aqui.
+      </div>
+      <div class="status" id="status"></div>
+    </div>
+
+    <div class="card">
+      <h2>COMO FUNCIONA</h2>
+      <div class="hint" style="margin-top:0;">
+        1. A imagem entra e o fundo é apagado por um modelo de IA rodando localmente no seu navegador (primeira vez baixa ~40MB do modelo, depois fica em cache).<br><br>
+        2. Você ajusta compressão e tamanho.<br><br>
+        3. Baixa o .webp com fundo transparente, pronto pra subir no catálogo.
+      </div>
+    </div>
+  </div>
+
+  <div class="previews" id="previews" style="display:none;">
+    <div class="preview-box">
+      <h3>ORIGINAL</h3>
+      <div class="checker"><img id="origImg"></div>
+    </div>
+    <div class="preview-box">
+      <h3>SEM FUNDO</h3>
+      <div class="checker"><img id="resultImg"></div>
+      <div class="controls">
+        <div class="row">
+          <label>Qualidade WebP</label>
+          <input type="range" id="qualitySlider" min="30" max="95" value="80">
+          <span class="val" id="qualityVal">80%</span>
+        </div>
+        <div class="row">
+          <label>Largura máx. (px)</label>
+          <input type="range" id="widthSlider" min="400" max="2400" step="50" value="1200">
+          <span class="val" id="widthVal">1200</span>
+        </div>
+      </div>
+      <div class="filesize" id="filesize"></div>
+      <div class="actions">
+        <button class="btn" id="downloadBtn" disabled>Baixar .webp</button>
+        <button class="btn secondary" id="resetBtn">Começar de novo</button>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Antes de usar fotos encontradas prontas na internet num site de vendas: a maioria delas tem direitos autorais do fotógrafo, da marca ou do banco de imagens, mesmo sem marca d'água visível. Pra uso comercial o mais seguro é foto própria, foto fornecida pelo fabricante/fornecedor, ou bancos com licença livre para uso comercial (Unsplash, Pexels, Pixabay). Vale checar a licença de cada imagem antes de publicar.
+  </footer>
+</div>
+
+<script type="module">
+  import { removeBackground } from "https://esm.sh/@imgly/background-removal@1.7.0";
+
+  const dropZone = document.getElementById('dropZone');
+  const fileInput = document.getElementById('fileInput');
+  const urlInput = document.getElementById('urlInput');
+  const urlBtn = document.getElementById('urlBtn');
+  const statusEl = document.getElementById('status');
+  const previews = document.getElementById('previews');
+  const origImg = document.getElementById('origImg');
+  const resultImg = document.getElementById('resultImg');
+  const qualitySlider = document.getElementById('qualitySlider');
+  const qualityVal = document.getElementById('qualityVal');
+  const widthSlider = document.getElementById('widthSlider');
+  const widthVal = document.getElementById('widthVal');
+  const filesizeEl = document.getElementById('filesize');
+  const downloadBtn = document.getElementById('downloadBtn');
+  const resetBtn = document.getElementById('resetBtn');
+
+  let cutoutBlob = null; // PNG blob with transparent bg, straight from the model
+  let finalWebpBlob = null;
+  let originalName = 'produto';
+
+  function setStatus(msg, kind){
+    statusEl.textContent = msg || '';
+    statusEl.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function nameWithoutExt(name){
+    const i = name.lastIndexOf('.');
+    return i > 0 ? name.slice(0, i) : name;
+  }
+
+  async function processSource(source, label){
+    try{
+      previews.style.display = 'none';
+      downloadBtn.disabled = true;
+      setStatus('Carregando modelo e removendo fundo de "' + label + '"... (pode levar alguns segundos na primeira vez)');
+
+      // preview original
+      const origUrl = (source instanceof Blob) ? URL.createObjectURL(source) : source;
+      origImg.src = origUrl;
+
+      const blob = await removeBackground(source);
+      cutoutBlob = blob;
+
+      resultImg.src = URL.createObjectURL(blob);
+      previews.style.display = 'grid';
+      setStatus('Fundo removido. Ajuste a compressão e baixe.', 'ok');
+      await renderWebp();
+    }catch(err){
+      console.error(err);
+      setStatus('Não consegui processar essa imagem (' + (err?.message || 'erro desconhecido') + '). Se veio de um link, tente salvar a imagem e arrastar o arquivo.', 'err');
+    }
+  }
+
+  async function renderWebp(){
+    if(!cutoutBlob) return;
+    const bitmap = await createImageBitmap(cutoutBlob);
+    const maxW = parseInt(widthSlider.value, 10);
+    const scale = Math.min(1, maxW / bitmap.width);
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0, w, h);
+
+    const quality = parseInt(qualitySlider.value, 10) / 100;
+    finalWebpBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', quality));
+
+    const kb = (finalWebpBlob.size / 1024).toFixed(0);
+    filesizeEl.innerHTML = 'Tamanho final: <b>' + kb + ' KB</b> · ' + w + '×' + h + 'px';
+    downloadBtn.disabled = false;
+  }
+
+  qualitySlider.addEventListener('input', () => {
+    qualityVal.textContent = qualitySlider.value + '%';
+    renderWebp();
+  });
+  widthSlider.addEventListener('input', () => {
+    widthVal.textContent = widthSlider.value;
+    renderWebp();
+  });
+
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag');
+    const file = e.dataTransfer.files?.[0];
+    if(file){
+      originalName = nameWithoutExt(file.name);
+      processSource(file, file.name);
+    }
+  });
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files?.[0];
+    if(file){
+      originalName = nameWithoutExt(file.name);
+      processSource(file, file.name);
+    }
+  });
+
+  urlBtn.addEventListener('click', () => {
+    const url = urlInput.value.trim();
+    if(!url) return;
+    try{
+      const u = new URL(url);
+      originalName = nameWithoutExt(u.pathname.split('/').pop() || 'produto');
+    }catch{ originalName = 'produto'; }
+    processSource(url, url);
+  });
+  urlInput.addEventListener('keydown', e => { if(e.key === 'Enter') urlBtn.click(); });
+
+  downloadBtn.addEventListener('click', () => {
+    if(!finalWebpBlob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(finalWebpBlob);
+    a.download = originalName + '-sem-fundo.webp';
+    a.click();
+  });
+
+  resetBtn.addEventListener('click', () => {
+    cutoutBlob = null;
+    finalWebpBlob = null;
+    previews.style.display = 'none';
+    fileInput.value = '';
+    urlInput.value = '';
+    setStatus('');
+  });
+</script>
+</body>
+</html>
