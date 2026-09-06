@@ -4,6 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Extrator de Produto — fundo fora, WebP pronto</title>
+<!-- Libera multithreading do WebAssembly mesmo no GitHub Pages (que não deixa configurar
+     os cabeçalhos COOP/COEP que isso normalmente exige). Sem isso, a IA roda em só 1 núcleo
+     de CPU, mesmo em máquinas com vários núcleos livres. -->
+<script src="coi-serviceworker.js"></script>
 <style>
   :root{
     --bg: #17181a;
@@ -161,6 +165,37 @@
 
   .actions{ display:flex; gap:10px; margin-top: 14px; flex-wrap:wrap; }
 
+  .batch-item{
+    display:flex; align-items:center; gap:12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+    font-size: 0.85rem;
+  }
+  .batch-item:last-child{ border-bottom:none; }
+  .batch-thumb{
+    width: 48px; height: 48px; flex-shrink:0; border-radius:6px; overflow:hidden;
+    background-color:#1a1a1a;
+    background-image:
+      linear-gradient(45deg, #2b2c2f 25%, transparent 25%),
+      linear-gradient(-45deg, #2b2c2f 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #2b2c2f 75%),
+      linear-gradient(-45deg, transparent 75%, #2b2c2f 75%);
+    background-size: 12px 12px;
+    background-position: 0 0, 0 6px, 6px -6px, -6px 0px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .batch-thumb img{ max-width:100%; max-height:100%; }
+  .batch-name{ flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .batch-status{ color: var(--muted); font-size:0.78rem; width: 150px; flex-shrink:0; }
+  .batch-status.ok{ color: var(--ok); }
+  .batch-status.err{ color: var(--err); }
+  .batch-dl{
+    background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 5px 10px; font-size: 0.78rem; cursor:pointer; text-decoration:none; flex-shrink:0;
+  }
+  .batch-dl:hover{ border-color: var(--accent); }
+  .batch-dl[disabled]{ opacity:0.35; pointer-events:none; }
+
   footer{
     margin-top: 34px;
     padding-top: 16px;
@@ -183,10 +218,10 @@
     <div class="card">
       <h2>ENVIAR IMAGEM</h2>
       <div class="drop" id="dropZone">
-        <div class="big">Arraste a foto aqui</div>
-        <div class="small">ou clique para escolher um arquivo</div>
+        <div class="big">Arraste até 10 fotos aqui</div>
+        <div class="small">ou clique para escolher (uma ou várias) — 1 foto abre o ajuste fino, 2+ vai pro modo lote</div>
       </div>
-      <input type="file" id="fileInput" accept="image/*">
+      <input type="file" id="fileInput" accept="image/*" multiple>
       <div class="url-row">
         <input type="text" id="urlInput" placeholder="ou cole o link direto da imagem (https://...)">
         <button id="urlBtn">Usar link</button>
@@ -206,6 +241,16 @@
       </div>
       <div class="hint" style="margin-top:2px;">
         A foto é redimensionada pra esse tamanho antes de passar pela IA. Menor = mais rápido e menos risco de travar o navegador. 1200–1600px já é mais que suficiente pra foto de produto.
+      </div>
+      <div class="row" style="margin-top:14px;">
+        <label>Processar em</label>
+        <select id="engineSelect" style="flex:1; background:var(--panel-2); color:var(--text); border:1px solid var(--line); border-radius:6px; padding:6px 8px;">
+          <option value="cpu" selected>CPU (multi-núcleo)</option>
+          <option value="gpu">GPU (WebGPU)</option>
+        </select>
+      </div>
+      <div class="hint" style="margin-top:6px;">
+        Com placa de vídeo dedicada, "GPU" costuma ganhar de longe. Só com placa de vídeo integrada (Intel UHD, por ex.), vale testar os dois — às vezes "CPU" processando em vários núcleos ganha da GPU integrada.
       </div>
     </div>
   </div>
@@ -238,6 +283,15 @@
     </div>
   </div>
 
+  <div class="card" id="batchCard" style="display:none; margin-top:14px;">
+    <h2>LOTE — <span id="batchProgress"></span></h2>
+    <div id="batchList"></div>
+    <div class="actions">
+      <button class="btn" id="batchDownloadAllBtn" disabled>Baixar todos os prontos</button>
+      <button class="btn secondary" id="batchResetBtn">Limpar lote</button>
+    </div>
+  </div>
+
   <footer>
     Antes de usar fotos encontradas prontas na internet num site de vendas: a maioria delas tem direitos autorais do fotógrafo, da marca ou do banco de imagens, mesmo sem marca d'água visível. Pra uso comercial o mais seguro é foto própria, foto fornecida pelo fabricante/fornecedor, ou bancos com licença livre para uso comercial (Unsplash, Pexels, Pixabay). Vale checar a licença de cada imagem antes de publicar.
   </footer>
@@ -260,12 +314,28 @@
   const widthVal = document.getElementById('widthVal');
   const preSizeSlider = document.getElementById('preSizeSlider');
   const preSizeVal = document.getElementById('preSizeVal');
+  const engineSelect = document.getElementById('engineSelect');
   const filesizeEl = document.getElementById('filesize');
   const downloadBtn = document.getElementById('downloadBtn');
   const resetBtn = document.getElementById('resetBtn');
+  const batchCard = document.getElementById('batchCard');
+  const batchProgress = document.getElementById('batchProgress');
+  const batchList = document.getElementById('batchList');
+  const batchDownloadAllBtn = document.getElementById('batchDownloadAllBtn');
+  const batchResetBtn = document.getElementById('batchResetBtn');
 
   preSizeSlider.addEventListener('input', () => {
     preSizeVal.textContent = preSizeSlider.value;
+  });
+
+  // Mostra se o multithreading (cross-origin isolation) está ativo — só aparece se não estiver,
+  // pra avisar que o coi-serviceworker.js precisa estar na raiz do site junto com o index.html.
+  window.addEventListener('load', () => {
+    setTimeout(() => {
+      if(!window.crossOriginIsolated){
+        setStatus('Aviso: multithreading não está ativo (crossOriginIsolated = false). Confira se coi-serviceworker.js está na raiz do repositório, ao lado do index.html.', 'err');
+      }
+    }, 1500);
   });
 
   let cutoutBlob = null; // PNG blob with transparent bg, straight from the model
@@ -328,9 +398,149 @@
     return pngBlob;
   }
 
+  // Core do modo lote: recebe UMA fonte (File ou URL) e devolve só o blob final em WebP.
+  // Cada etapa descarta a referência anterior assim que não precisa mais dela — o original
+  // e o recorte intermediário nunca ficam vivos na memória ao mesmo tempo que o resultado final.
+  async function processOneForBatch(source, maxDim, quality, targetWidth, engine, onProgress){
+    let normalized = await normalizeToPngBlob(source, maxDim);
+    // a partir daqui, 'source' (o File original) não é mais referenciado por esta função
+
+    const cutout = await removeBackground(normalized, {
+      model: 'isnet_quint8',
+      device: engine,
+      progress: (key, current, total) => {
+        if(total > 0 && onProgress) onProgress(Math.round((current/total)*100));
+      }
+    });
+    normalized = null; // descarta o PNG normalizado, já não precisamos mais dele
+
+    const bitmap = await createImageBitmap(cutout);
+    const scale = Math.min(1, targetWidth / bitmap.width);
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+    const canvas = document.createElement('canvas');
+    canvas.width = w; canvas.height = h;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0, w, h);
+    bitmap.close?.();
+
+    const webpBlob = await new Promise(resolve => canvas.toBlob(resolve, 'image/webp', quality));
+    // 'cutout' sai de escopo aqui e pode ser coletado pelo GC — só sobra webpBlob, bem menor
+    return { webpBlob, w, h };
+  }
+
+  const MAX_BATCH = 10;
+  let batchQueue = []; // { file, name, status, webpBlob, thumbUrl }
+
+  function renderBatchList(){
+    batchList.innerHTML = '';
+    batchQueue.forEach((item, i) => {
+      const row = document.createElement('div');
+      row.className = 'batch-item';
+
+      const thumb = document.createElement('div');
+      thumb.className = 'batch-thumb';
+      if(item.thumbUrl){
+        const img = document.createElement('img');
+        img.src = item.thumbUrl;
+        thumb.appendChild(img);
+      }
+
+      const name = document.createElement('div');
+      name.className = 'batch-name';
+      name.textContent = item.name;
+
+      const status = document.createElement('div');
+      status.className = 'batch-status' + (item.status === 'pronto' ? ' ok' : item.status === 'erro' ? ' err' : '');
+      status.textContent = item.status === 'processando' && item.pct != null
+        ? 'processando ' + item.pct + '%'
+        : item.status;
+
+      const dl = document.createElement(item.webpBlob ? 'a' : 'span');
+      dl.className = 'batch-dl';
+      dl.textContent = 'baixar';
+      if(item.webpBlob){
+        dl.href = trackObjectUrl(item.webpBlob);
+        dl.download = nameWithoutExt(item.name) + '-sem-fundo.webp';
+      }else{
+        dl.setAttribute('disabled', '');
+      }
+
+      row.append(thumb, name, status, dl);
+      batchList.appendChild(row);
+    });
+
+    const done = batchQueue.filter(i => i.status === 'pronto').length;
+    batchProgress.textContent = done + '/' + batchQueue.length + ' prontas';
+    batchDownloadAllBtn.disabled = done === 0;
+  }
+
+  async function runBatch(files){
+    const list = Array.from(files).slice(0, MAX_BATCH);
+    if(files.length > MAX_BATCH){
+      setStatus('Só processo até ' + MAX_BATCH + ' fotos por vez — as primeiras ' + MAX_BATCH + ' foram colocadas na fila.', 'err');
+    }else{
+      setStatus('');
+    }
+
+    clearPreviousImages();
+    previews.style.display = 'none';
+    batchCard.style.display = 'block';
+
+    // Guardamos só o File (referência leve, o navegador não lê o conteúdo até processarmos)
+    batchQueue = list.map(file => ({ file, name: file.name, status: 'aguardando', webpBlob: null, thumbUrl: null, pct: null }));
+    renderBatchList();
+
+    const maxDim = parseInt(preSizeSlider.value, 10);
+    const targetWidth = parseInt(widthSlider.value, 10);
+    const quality = parseInt(qualitySlider.value, 10) / 100;
+    const engine = engineSelect.value;
+
+    for(const item of batchQueue){
+      item.status = 'processando';
+      renderBatchList();
+      try{
+        const { webpBlob } = await processOneForBatch(
+          item.file, maxDim, quality, targetWidth, engine,
+          pct => { item.pct = pct; renderBatchList(); }
+        );
+        item.webpBlob = webpBlob;
+        item.thumbUrl = trackObjectUrl(webpBlob);
+        item.status = 'pronto';
+      }catch(err){
+        console.error(err);
+        item.status = 'erro';
+      }
+      item.file = null; // apaga a referência ao arquivo original assim que ele já foi processado
+      renderBatchList();
+    }
+  }
+
+  batchDownloadAllBtn.addEventListener('click', () => {
+    const ready = batchQueue.filter(i => i.status === 'pronto' && i.webpBlob);
+    ready.forEach((item, i) => {
+      setTimeout(() => {
+        const a = document.createElement('a');
+        a.href = trackObjectUrl(item.webpBlob);
+        a.download = nameWithoutExt(item.name) + '-sem-fundo.webp';
+        a.click();
+      }, i * 350); // pequeno intervalo pra o navegador não bloquear downloads múltiplos
+    });
+  });
+
+  batchResetBtn.addEventListener('click', () => {
+    activeObjectUrls.forEach(u => URL.revokeObjectURL(u));
+    activeObjectUrls = [];
+    batchQueue = [];
+    renderBatchList();
+    batchCard.style.display = 'none';
+    fileInput.value = '';
+  });
+
   async function processSource(source, label){
     try{
       clearPreviousImages();
+      batchCard.style.display = 'none';
+      batchQueue = [];
       previews.style.display = 'none';
       downloadBtn.disabled = true;
       const maxDim = parseInt(preSizeSlider.value, 10);
@@ -342,7 +552,7 @@
       setStatus('Removendo fundo... (baixando o modelo de IA na primeira vez, ~40MB, depois fica em cache)');
       const blob = await removeBackground(normalized, {
         model: 'isnet_quint8', // versão leve e rápida do modelo, ótima pra foto de produto
-        device: 'gpu', // usa WebGPU quando o navegador suporta; cai pra CPU sozinho se não tiver
+        device: engineSelect.value, // 'cpu' usa todos os núcleos disponíveis (graças ao coi-serviceworker); 'gpu' tenta WebGPU
         progress: (key, current, total) => {
           if(total > 0){
             setStatus('Removendo fundo... ' + key + ' (' + Math.round((current/total)*100) + '%)');
@@ -398,17 +608,23 @@
   dropZone.addEventListener('drop', e => {
     e.preventDefault();
     dropZone.classList.remove('drag');
-    const file = e.dataTransfer.files?.[0];
-    if(file){
-      originalName = nameWithoutExt(file.name);
-      processSource(file, file.name);
+    const files = e.dataTransfer.files;
+    if(!files || files.length === 0) return;
+    if(files.length === 1){
+      originalName = nameWithoutExt(files[0].name);
+      processSource(files[0], files[0].name);
+    }else{
+      runBatch(files);
     }
   });
   fileInput.addEventListener('change', () => {
-    const file = fileInput.files?.[0];
-    if(file){
-      originalName = nameWithoutExt(file.name);
-      processSource(file, file.name);
+    const files = fileInput.files;
+    if(!files || files.length === 0) return;
+    if(files.length === 1){
+      originalName = nameWithoutExt(files[0].name);
+      processSource(files[0], files[0].name);
+    }else{
+      runBatch(files);
     }
   });
 
